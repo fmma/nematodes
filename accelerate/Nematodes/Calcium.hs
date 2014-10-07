@@ -1,12 +1,14 @@
 module Nematodes.Calcium where
 
+import Prelude hiding (map, zipWith)
+
 import Data.Array.Accelerate
 
 type Prec = Float
 
-type Frames = Arra DIM3 Prec
+type Frames = Array DIM3 Prec
 
-data VarArgIn = VarArgIn { Tresh :: Prec, BThreash :: Prec, Circle :: Prec }
+data VarArgIn = VarArgIn { tresh :: Prec, bThreash :: Prec, circle :: Prec }
 
 type Ratio = Vector Prec
 type Yfp = Vector Prec
@@ -15,7 +17,7 @@ type Cfp = Vector Prec
 type Matrix = Array Dim2
 
 splitter2 :: a -- Transform?
-         -> Acc (Matrix Prec) 
+         -> Acc (Matrix Prec)
          -> Acc (Katrix Prec, Matrix Prec)
 splitter2 = undefined -- TODO
 
@@ -52,68 +54,71 @@ calcium_process frames varargin =
   -- The following assumes 
   --   use_circle == 0
   --   handle_backround == 0
-  let 
+  let
     tform = undefined -- TODO find_good_reference_frame
-    ((((), (yfp, _)), (cfp, _)), (ratio, _)) = run $ runSequence
-      -- im(i) :: Matrix Prec = 
-        $ useLazy frames -- Todo slice
+    (yfp, cfp, ratio) = run $ collect $
+      let im :: Seq [Matrix Prec]
+          im = toSeqInner (use frames)
 
-      -- split :: (Matrix Prec, Matrix Prec)
-        $ mapSeq (splitter2 tform) ZeroIdx{-im(i)-}
+          split :: Seq [(Matrix Prec, Matrix Prec)]
+          split = mapSeq (splitter2 tform) im
 
-      -- tresh = (tresh :: Scalar Prec, btresh :: Scalar Prec)
-        $ mapSeq (thresh_estimate . afst) ZeroIdx{-split-}
+          tresh :: Seq [(Scalar Prec, Scalar Prec)]
+          tresh = mapSeq (thresh_estimate . afst) split
 
-      -- BWmax :: Matrix Bool =
-        $ zipWithSeq 
-            (\ x y -> zipWith (>) (afst x) (afst y)) 
-            (SuccIdx ZeroIdx){-split-} 
-            ZeroIdx{-tresh-}
+          bWmax :: Seq [Matrix Bool]
+          bWmax =
+            zipWithSeq
+              (\ x y -> zipWith (>) (afst x) (afst y))
+              split
+              tresh
 
-      -- CCmax :: Vector (Int, Int) =      Note: This is a simplification from matlab.
-        $ mapSeq bwconnectcomp ZeroIdx{-BWmax-}
+          cCmax :: Seq [Vector (Int, Int)]
+          cCmax = mapSeq bwconnectcomp bWmax -- Note: This is a simplification from matlab.
 
-      -- Smax :: (Int, Int) =
-        $ mapSeq centroid ZeroIdx{-CCmax-}
+          smax :: Seq [Scalar (Int, Int)]
+          smax = mapSeq centroid cCmax
 
-      -- mask :: (Matrix Bool, Matrix Bool) = 
-        $ zipWithSeq
-            (\ x y -> stencilStuff (afst x) y) 
-            (SuccIdx (SuccIdx (SuccIdx (SuccIdx ZeroIdx)))){-split-} 
-            ZeroIdx{-Smax-}
+          mask :: Seq [(Matrix Bool, Matrix Bool)]
+          mask =
+            zipWithSeq
+              (\ x y -> stencilStuff (afst x) y)
+              split
+              smax
 
-      -- masked :: (Matrix Prec, Matrix Prec) =
-        $ zipWithSeq 
-            (\ (lhs_mask, rhs_mask) (lhs, rhs) -> (lhs_mask (map (*)) lhs, rhs_mask (map (*)) rhs)) x y) 
-            ZeroIdx{-mask-}
-            (SuccIdx (SuccIdx (SuccIdx (SuccIdx (SuccIdx ZeroIdx))))){-split-}
+          masked :: Seq [(Matrix Prec, Matrix Prec)]
+          masked =
+            zipWithSeq
+              (\ (lhs_mask, rhs_mask) (lhs, rhs) -> (lhs_mask (map (*)) lhs, rhs_mask (map (*)) rhs) x y)
+              mask
+              split
 
-      -- lhs_nnz :: Int =
-        $ mapSeq (length . find (>0) . afst) ZeroIdx{-masked-}
+          lhs_nnz :: Seq [Scalar Int]
+          lhs_nnz = mapSeq (length . find (>0) . afst) masked
 
-      -- rhs_nnz :: Int =
-        $ mapSeq (length . find (>0) . asnd) (SuccIdx ZeroIdx){-masked-}
+          rhs_nnz :: Seq [Scalar Int]
+          rhs_nnz = mapSeq (length . find (>0) . asnd) masked
 
-      -- yfp(i) :: Prec =
-        $ zipWithSeq 
-            (\ mask lhs_nnz -> zipWith (/) (fold (+) 0 (afst mask)) lhs_nnz) 
-            (SuccIdx (SuccIdx ZeroIdx)){-masked-}
-            (SuccIdx ZeroIdx){-lhs_nnz-}
-        $ fromSeq ZeroIdx
+          yfp :: Seq [Scalar Prec]
+          yfp =
+            zipWithSeq
+              (\ mask lhs_nnz -> zipWith (/) (fold (+) 0 (afst mask)) lhs_nnz)
+              masked
+              lhs_nnz
 
-      -- cfp(i) :: Prec =
-        $ zipWithSeq
-            (\ mask rhs_nnz -> zipWith (/) (fold (+) 0 (asnd mask)) rhs_nnz)
-            (Succ (SuccIdx (SuccIdx ZeroIdx))){-masked-}
-            (SuccIdx ZeroIdx){-rhs_nnz-}
-        $ fromSeq ZeroIdx
+          cfp :: Seq [Scalar Prec]
+          cfp =
+            zipWithSeq
+              (\ mask rhs_nnz -> zipWith (/) (fold (+) 0 (asnd mask)) rhs_nnz)
+              masked
+              rhs_nnz
 
-      -- ratio :: Prec =
-        $ zipWithSeq
-            (\ x y -> zipWith (/) x y - 0.6)
-            (SuccIdx ZeroIdx){-yfp(i)-}
-            ZeroIdx{-cfp(i)-}
-        $ fromSeq ZeroIdx
+          ratio :: Seq [Scalar Prec]
+          ratio =
+            zipWithSeq
+              (\ x y -> zipWith (/) x y - 0.6)
+              yfp
+              cfp
 
-        $ emptySeq
+      in lift (fromSeq yfp, fromSeq cfp, fromSeq ratio)
   in (ratio, yfp, cfp)
