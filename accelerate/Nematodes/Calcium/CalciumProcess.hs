@@ -1,36 +1,19 @@
-module Nematodes.Calcium where
+{-# language ViewPatterns #-}
 
-import Prelude hiding (map, zipWith, length, fromIntegral, (++))
+module Nematodes.Calcium.CalciumProcess (
+
+  calcium_process,
+
+) where
+
+import Prelude hiding (map, zipWith, length, fromIntegral, (++), unzip, round, sum)
+
+import Nematodes.Types
+import Nematodes.MatlabFunctions
+import Nematodes.Calcium.ThreshEstimate ( thresh_estimate )
+import Nematodes.Splitter.Splitter2 ( splitter2 )
 
 import Data.Array.Accelerate
-
-type Prec = Float
-
-type Frames = Array DIM3 Prec
-
-data VarArgIn = VarArgIn { thresh :: Prec, bThreash :: Prec, circle :: Prec }
-
-type Ratio = Vector Prec
-type Yfp = Vector Prec
-type Cfp = Vector Prec
-
-type Matrix = Array DIM2
-
-splitter2 :: a -- Transform?
-         -> Acc (Matrix Prec)
-         -> Acc (Matrix Prec, Matrix Prec)
-splitter2 = undefined -- TODO
-
-thresh_estimate :: Acc (Matrix Prec) -> Acc (Scalar Prec, Scalar Prec)
-thresh_estimate = undefined -- TODO
-
-bwconnectcomp :: Acc (Matrix Bool)       -- Black and white image.
-              -> Acc (Vector (Int, Int)) -- Vector of points in cc.
-bwconnectcomp = undefined -- TODO
-
-centroid :: Acc (Vector (Int, Int))
-         -> Acc (Scalar (Int, Int))
-centroid = undefined -- TODO
 
 {-
  % try to make a mask based on the largest connected
@@ -46,19 +29,21 @@ centroid = undefined -- TODO
 stencilStuff :: Acc (Matrix Prec)       -- [lhs, rhs]
              -> Acc (Scalar (Int, Int)) -- Smax
              -> Acc (Matrix Bool, Matrix Bool) -- (lsh_mask, rhs_mask)
-stencilStuff = undefined -- TODO
+stencilStuff _ _ = lift (fromList (Z :. 0 :. 0) [], fromList (Z :. 0 :. 0) []) -- TODO
 
 calcium_process :: Frames -> VarArgIn -> Acc (Ratio, Yfp, Cfp)
 calcium_process frames varargin =
-  let tform = undefined -- TODO find_good_reference_frame
+  let 
+    tform :: Tform Prec
+    tform = undefined -- TODO find_good_reference_frame
   in collect $ calcium_process_seq tform (toSeqInner (use frames))
 
   -- TODO handle_args
   -- The following assumes the following simplifications from the matlab version
-  --   * Only one connected component
-  --   * use_circle == 0
-  --   * handle_backround == 0
-calcium_process_seq :: Acc (Matrix Prec) -> Seq [Matrix Prec] -> Seq (Ratio, Yfp, Cfp)
+  --   1. Only one connected component
+  --   2. use_circle == 0
+  --   3. handle_backround == 0
+calcium_process_seq :: Tform Prec -> Seq [Matrix Prec] -> Seq (Ratio, Yfp, Cfp)
 calcium_process_seq tform im =
   let split :: Seq [(Matrix Prec, Matrix Prec)]
       split = mapSeq (splitter2 tform) im
@@ -73,13 +58,13 @@ calcium_process_seq tform im =
           split
           thresh
 
-      cCmax :: Seq [Vector (Int, Int)]  -- Simplification 1
+      cCmax :: Seq [Vector (Int, Int)]  -- Simplification (1)
       cCmax = mapSeq bwconnectcomp bWmax
 
-      smax :: Seq [Scalar (Int, Int)]   -- Simplification 1
+      smax :: Seq [Scalar (Int, Int)]   -- Simplification (1)
       smax = mapSeq centroid cCmax
 
-      mask :: Seq [(Matrix Bool, Matrix Bool)]  -- Simplification 2
+      mask :: Seq [(Matrix Bool, Matrix Bool)]  -- Simplification (2)
       mask =
         zipWithSeq
           (\ x y -> stencilStuff (afst x) y)
@@ -125,8 +110,11 @@ calcium_process_seq tform im =
 
   in lift (fromSeqElems yfp, fromSeqElems cfp, fromSeqElems ratio)
 
-countPositive :: Acc (Array sh Prec) -> Acc (Scalar Int)
-countPositive = undefined
+countPositive :: Shape sh => Acc (Array sh Prec) -> Acc (Scalar Int)
+countPositive acc = sum (map f acc)
+  where
+    f :: Exp Prec -> Exp Int
+    f x = boolToInt (x >* constant 0.0)
 
 boolToFloat :: Exp Bool -> Exp Float
 boolToFloat = fromIntegral . boolToInt
