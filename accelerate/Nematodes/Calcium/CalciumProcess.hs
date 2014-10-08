@@ -1,4 +1,4 @@
-{-# language ViewPatterns #-}
+{-# language ScopedTypeVariables #-}
 
 module Nematodes.Calcium.CalciumProcess (
 
@@ -26,15 +26,19 @@ import Data.Array.Accelerate
     lhs_mask = imdilate(lhs_mask,se) > strel_size;
     rhs_mask = lhs_mask;
 -}
-stencilStuff :: Acc (Matrix Prec)       -- [lhs, rhs]
+stencilStuff :: (Elt e, IsFloating e) 
+             => Acc (Matrix e)          -- [lhs, rhs]
              -> Acc (Scalar (Int, Int)) -- Smax
              -> Acc (Matrix Bool, Matrix Bool) -- (lsh_mask, rhs_mask)
 stencilStuff _ _ = lift (fromList (Z :. 0 :. 0) [], fromList (Z :. 0 :. 0) []) -- TODO
 
-calcium_process :: Frames -> VarArgIn -> Acc (Ratio, Yfp, Cfp)
+calcium_process :: forall e. (Elt e, IsFloating e)
+                => Frames e
+                -> VarArgIn e
+                -> Acc (Vector e, Vector e, Vector e)
 calcium_process frames varargin =
   let 
-    tform :: Tform Prec
+    tform :: Tform e
     tform = undefined -- TODO find_good_reference_frame
   in collect $ calcium_process_seq tform (toSeqInner (use frames))
 
@@ -43,12 +47,15 @@ calcium_process frames varargin =
   --   1. Only one connected component
   --   2. use_circle == 0
   --   3. handle_backround == 0
-calcium_process_seq :: Tform Prec -> Seq [Matrix Prec] -> Seq (Ratio, Yfp, Cfp)
+calcium_process_seq :: forall e. (Elt e, IsFloating e)
+                    => Tform e
+                    -> Seq [Matrix e]
+                    -> Seq (Vector e, Vector e, Vector e)
 calcium_process_seq tform im =
-  let split :: Seq [(Matrix Prec, Matrix Prec)]
+  let split :: Seq [(Matrix e, Matrix e)]
       split = mapSeq (splitter2 tform) im
 
-      thresh :: Seq [(Scalar Prec, Scalar Prec)]
+      thresh :: Seq [(Scalar e, Scalar e)]
       thresh = mapSeq (thresh_estimate . afst) split
 
       bWmax :: Seq [Matrix Bool]
@@ -71,13 +78,13 @@ calcium_process_seq tform im =
           split
           smax
 
-      masked :: Seq [(Matrix Prec, Matrix Prec)]
+      masked :: Seq [(Matrix e, Matrix e)]
       masked =
         zipWithSeq
           (\ mask split -> 
             let (lhs_mask, rhs_mask) = unlift mask
                 (lhs, rhs) = unlift split
-            in lift (zipWith (*) (map boolToFloat lhs_mask) lhs, zipWith (*) (map boolToFloat rhs_mask) rhs))
+            in lift (zipWith (*) (map boolToPrec lhs_mask) lhs, zipWith (*) (map boolToPrec rhs_mask) rhs))
           mask
           split
 
@@ -87,21 +94,21 @@ calcium_process_seq tform im =
       rhs_nnz :: Seq [Scalar Int]
       rhs_nnz = mapSeq (countPositive . asnd) masked
 
-      yfp :: Seq [Scalar Prec]
+      yfp :: Seq [Scalar e]
       yfp =
         zipWithSeq
           (\ mask lhs_nnz -> zipWith (/) (foldAll (+) 0 (afst mask)) (map fromIntegral lhs_nnz))
           masked
           lhs_nnz
 
-      cfp :: Seq [Scalar Prec]
+      cfp :: Seq [Scalar e]
       cfp =
         zipWithSeq
           (\ mask rhs_nnz -> zipWith (/) (foldAll (+) 0.0 (asnd mask)) (map fromIntegral rhs_nnz))
           masked
           rhs_nnz
 
-      ratio :: Seq [Scalar Prec]
+      ratio :: Seq [Scalar e]
       ratio =
         zipWithSeq
           (zipWith (\ x y -> x / y - 0.6))
@@ -110,11 +117,8 @@ calcium_process_seq tform im =
 
   in lift (fromSeqElems yfp, fromSeqElems cfp, fromSeqElems ratio)
 
-countPositive :: Shape sh => Acc (Array sh Prec) -> Acc (Scalar Int)
-countPositive acc = sum (map f acc)
-  where
-    f :: Exp Prec -> Exp Int
-    f x = boolToInt (x >* constant 0.0)
+countPositive :: (Elt e, IsFloating e, Shape sh) => Acc (Array sh e) -> Acc (Scalar Int)
+countPositive acc = sum (map (\ x -> boolToInt (x >* fromIntegral (constant (0 :: Int)))) acc)
 
-boolToFloat :: Exp Bool -> Exp Float
-boolToFloat = fromIntegral . boolToInt
+boolToPrec :: (Elt e, IsFloating e) => Exp Bool -> Exp e
+boolToPrec = fromIntegral . boolToInt

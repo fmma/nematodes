@@ -1,28 +1,22 @@
 module Nematodes.Types (
 
-  Prec, Matrix, Frames, VarArgIn(..), Tform(..), Ratio, Yfp, Cfp
+  Matrix, Frames, VarArgIn(..), Tform(..),
 
 ) where
 
 import Data.Array.Accelerate
 
-type Prec = Float
+type Matrix e = Array DIM2 e
+type Frames e = Array DIM3 e
 
-type Matrix a = Array DIM2 a
-type Frames = Array DIM3 Prec
+data VarArgIn e = VarArgIn { thresh :: e, bThreash :: e, circle :: e }
 
-data VarArgIn = VarArgIn { thresh :: Prec, bThreash :: Prec, circle :: Prec }
-
-data Tform a = 
-    Affine (Matrix a)
-  | Projective (Matrix a)
+data Tform e = 
+    Affine (Matrix e)
+  | Projective (Matrix e)
   | Custom 
       Int -- NDIMS_IN 
       Int -- NDIMS_OUT
-      (Acc (Matrix a) -> Acc (Matrix a)) -- FORWARD_FCN
-      (Acc (Matrix a) -> Acc (Matrix a)) -- INVERSE_FCN
+      (Acc (Matrix e) -> Acc (Matrix e)) -- FORWARD_FCN
+      (Acc (Matrix e) -> Acc (Matrix e)) -- INVERSE_FCN
       [String] -- TDATA
-
-type Ratio = Vector Prec
-type Yfp = Vector Prec
-type Cfp = Vector Prec

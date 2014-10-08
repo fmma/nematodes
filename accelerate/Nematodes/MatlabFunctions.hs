@@ -1,3 +1,5 @@
+{-# language RankNTypes, ScopedTypeVariables #-}
+
 module Nematodes.MatlabFunctions (
 
   bwconnectcomp, centroid,
@@ -16,7 +18,7 @@ bwconnectcomp _ = use (fromList (Z :. 0) []) -- TODO
 
 centroid :: Acc (Vector (Int, Int))
          -> Acc (Scalar (Int, Int))
-centroid c = map (`div` (length c)) (foldAll plus p0 c)
+centroid c = map (`div` length c) (foldAll plus p0 c)
   where
     plus :: Exp (Int, Int) -> Exp (Int, Int) -> Exp (Int, Int)
     plus p1 p2 =
@@ -25,15 +27,15 @@ centroid c = map (`div` (length c)) (foldAll plus p0 c)
       in lift (x1+x2,y1+y2)
 
     p0 :: Exp (Int, Int)
-    p0 = (lift (0 :: Int, 0 :: Int))
+    p0 = lift (0 :: Int, 0 :: Int)
 
     div :: Exp (Int, Int) -> Exp Int -> Exp (Int, Int)
     div p1 z =
       let (x,y) = unlift p1 :: (Exp Int, Exp Int)
-          xf :: Exp Prec
+          xf :: Exp Float
           xf = fromIntegral x
-          yf :: Exp Prec
+          yf :: Exp Float
           yf = fromIntegral y
-          zf :: Exp Prec
+          zf :: Exp Float
           zf = fromIntegral z
       in lift (round $ xf / zf, round $ yf / zf)
